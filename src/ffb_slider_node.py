@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 # Copyright 2019 Wesley Liao
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -163,7 +165,7 @@ class FFBSlider:
             self.force_sub_cb,
             callback_args = self.player2_force)
 
-        self.js_pub = rospy.Publisher('ffb_slider/joint_state', JointState, queue_size=1)
+        self.js_pub = rospy.Publisher('joint_states', JointState, queue_size=1)
         self.slider_joint_frame = slider_joint_frame
         self.msg_id = 0 
 
@@ -235,7 +237,7 @@ class FFBSlider:
 
         self.js_pub.publish(JointState(
             header = self.next_header(),
-            name = ("slider",),
+            name = ("baseboard_to_slider",),
             position = ((self.odaxis.encoder.pos_estimate-self.center_position)*self.travel_per_count_m,),
             velocity = (self.odaxis.encoder.vel_estimate*self.travel_per_count_m,),
             effort = (0.0,)))
