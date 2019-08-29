@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
 import rospy
 from geometry_msgs.msg import Wrench
 from geometry_msgs.msg import WrenchStamped
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Header
-"""
+
 import odrive
 import odrive.enums
 
@@ -132,12 +131,12 @@ class FFBSlider:
 
 
     def __init__(self,
-         odrive_axis):#,
-         #slider_joint_frame,
-         #player1_force_topic,
-         #player2_force_topic, 
-         #update_frequency_Hz = 120,
-         #slider_travel_per_count_m = 0.0001):
+         odrive_axis,
+         slider_joint_frame,
+         player1_force_topic,
+         player2_force_topic, 
+         update_frequency_Hz = 10,
+         slider_travel_per_count_m = 0.0001):
     
         self.odaxis = odrive_axis
 
@@ -150,55 +149,45 @@ class FFBSlider:
         self.player1_force = 0.0
         self.player2_force = 0.0
 
-        """
         rospy.init_node('ffb_slider')
 
         self.p1_sub = rospy.Subscriber(
             player1_force_topic,
             WrenchStamped,
-            self.force_cb,
+            self.force_sub_cb,
             callback_args = self.player1_force)
 
         self.p2_sub = rospy.Subscriber(
             player2_force_topic,
             WrenchStamped,
-            self.force_cb,
+            self.force_sub_cb,
             callback_args = self.player2_force)
 
         self.js_pub = rospy.Publisher('ffb_slider/joint_state', JointState, queue_size=1)
-        
-        self.joint_state = JointState(
-            header = self.next_header(),
-            name = 'ffb_slider',
-            position = None,
-            velocity = None,
-            effort = None)
-        self.joint_state_last = None
+        self.slider_joint_frame = slider_joint_frame
+        self.msg_id = 0 
 
-        """
+        self.travel_per_count_m = slider_travel_per_count_m
 
         self.state = self.SLIDER_STATE_UNCALIBRATED
         self.calibration_step = None
         
         self.t_last = monotonic.monotonic()
-        self.update_interval_s = 0.5#1.0/update_frequency_Hz
+        self.update_interval_s = 1.0/update_frequency_Hz
         self.update()
 
     @property
     def center_position(self):
         if self.forward_limit is None or self.reverse_limit is None:
             return None
-        return (self.forward_limit - self.reverse_limit)/2
+        return ((self.forward_limit - self.reverse_limit)/2)+self.reverse_limit
 
     def next_header(self):
-        msg_id = 0
-        while True:
-            header = Header(
-            seq = msg_id,
-            stamp = rospy.get_time(),
+        self.msg_id += 1
+        return Header(
+            seq = self.msg_id,
+            stamp = rospy.get_rostime(),
             frame_id = self.slider_joint_frame)
-            msg_id += 1
-            yield header    
 
     def force_sub_cb(self, msg, player):
         player = msg.wrench.force.x
@@ -230,17 +219,26 @@ class FFBSlider:
         if self.state != self.SLIDER_STATE_SHUTDOWN:
             looptimer = threading.Timer(self.update_interval_s, self.update)
             looptimer.start()
+        else:
+            self.odaxis.requested_state = odrive.enums.AXIS_STATE_IDLE
         
         t_now = monotonic.monotonic()
         dt_s = t_now-self.t_last
         self.t_last = t_now
 
-        print(dt_s, self.statestr(), self.calibstr(), self.odaxis.current_state,
-	    '{:06.2f}'.format(self.forward_limit), 
-	    '{:06.2f}'.format(self.reverse_limit),
-	    '{:06.2f}'.format(self.center_position), 
-	    '{:06.2f}'.format(self.odaxis.encoder.pos_estimate),
-	    '{:06.2f}'.format(self.odaxis.encoder.vel_estimate))
+        print('{:06.5f}'.format(dt_s), self.statestr(), self.calibstr(), self.odaxis.current_state,
+        '{:06.2f}'.format(self.forward_limit), 
+        '{:06.2f}'.format(self.reverse_limit),
+        '{:06.2f}'.format(self.center_position), 
+        '{:06.2f}'.format(self.odaxis.encoder.pos_estimate),
+        '{:06.2f}'.format(self.odaxis.encoder.vel_estimate))
+
+        self.js_pub.publish(JointState(
+            header = self.next_header(),
+            name = ("slider",),
+            position = ((self.odaxis.encoder.pos_estimate-self.center_position)*self.travel_per_count_m,),
+            velocity = (self.odaxis.encoder.vel_estimate*self.travel_per_count_m,),
+            effort = (0.0,)))
 
         if self.state  == self.SLIDER_STATE_ERROR:
             print("ERROR")
@@ -255,12 +253,16 @@ class FFBSlider:
 
             elif self.calibration_step == self.CALIBRATION_STEP_ODRIVE_ENCODER_OFFSET:
                 if self.odaxis.current_state == odrive.enums.AXIS_STATE_IDLE: #wait for odrive to finish
-                    self.odaxis.controller.config.control_mode = odrive.enums.CTRL_MODE_VELOCITY_CONTROL
-		    self.odaxis.requested_state = odrive.enums.AXIS_STATE_CLOSED_LOOP_CONTROL
-		    self.odaxis.controller.vel_setpoint = 2400 #counts/s
-		    fwtimeout = threading.Timer(5.0, self.motor_limit_timeout)
-		    fwtimeout.start()
-                    self.calibration_step = self.CALIBRATION_STEP_FORWARD_LIMIT
+            
+                    if not self.odaxis.error:
+                        self.odaxis.controller.config.control_mode = odrive.enums.CTRL_MODE_VELOCITY_CONTROL
+                        self.odaxis.requested_state = odrive.enums.AXIS_STATE_CLOSED_LOOP_CONTROL
+                        self.odaxis.controller.vel_setpoint = 2400 #counts/s
+                        fwtimeout = threading.Timer(5.0, self.motor_limit_timeout)
+                        fwtimeout.start()
+                        self.calibration_step = self.CALIBRATION_STEP_FORWARD_LIMIT
+                    else:
+                        self.state = self.SLIDER_STATE_ERROR
             
             elif self.calibration_step == self.CALIBRATION_STEP_CENTER_POSITION:
                 if abs(self.odaxis.encoder.vel_estimate) < 50 and abs(self.odaxis.encoder.shadow_count - self.center_position) < 120:
@@ -311,9 +313,18 @@ if __name__ == "__main__":
 
     travel_per_count_m = (belt_pitch_m*pulley_teeth)/encoder_cpr
     
-    ffbslider = FFBSlider(odrv0.axis1)
+    ffbslider = FFBSlider(odrv0.axis1,
+            "slider",
+            "load_cell_1",
+            "load_cell_2",
+            update_frequency_Hz = 10,
+        slider_travel_per_count_m = travel_per_count_m)
 
     time.sleep(2)
     ffbslider.calibrate_motor()
 
+
+    while(not rospy.is_shutdown()):
+        time.sleep(.1)
+    ffbslider.shutdown()
     
