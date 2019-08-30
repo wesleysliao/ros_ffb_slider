@@ -19,6 +19,11 @@ from slider import InteractionSlider
 import odrive
 import odrive.enums
 
+import rospy
+
+import threading
+import time
+
 class PIDController:
     
     def __init__(self, kp, ki, kd):
@@ -85,17 +90,17 @@ class FFBSlider(InteractionSlider):
         elif self.calibration_step == self.CALIBRATION_STEP_FORWARD_LIMIT:
             return "CALIBRATION_STEP_FORWARD_LIMIT        "
         elif self.calibration_step == self.CALIBRATION_STEP_REVERSE_LIMIT:
-            return "CALIBRATION_STEP_REVERSE_LIMIT        "
+            return "CALIBRATION_STEP_REVERSE_LIMIT       "
         elif self.calibration_step == self.CALIBRATION_STEP_CENTER_POSITION:
             return "CALIBRATION_STEP_CENTER_POSITION      "
         elif self.calibration_step == self.CALIBRATION_STEP_DONE:
             return "CALIBRATION_STEP_DONE                 "
 
     def __init__(self,
-            slider_joint_name: str,
-            slider_joint_frame_id: str,
-            player1_force_topic: str,
-            player2_force_topic: str,
+            slider_joint_name,
+            slider_joint_frame_id,
+            player1_force_topic,
+            player2_force_topic,
             odrive_axis,
             encoder_cpr = 2400,
             belt_pitch_m = 0.005,
@@ -103,14 +108,6 @@ class FFBSlider(InteractionSlider):
             node_name = "ODriveBeltSlider",
             update_frequency_Hz = 10):
 
-         super(FFBSlider, self).__init__(
-             slider_joint_name,
-             slider_joint_frame_id,
-             player1_force_topic,
-             player2_force_topic,
-             node_name = node_name,
-             update_frequency_Hz = update_frequency)
-    
         self.odaxis = odrive_axis
         self.encoder_cpr = encoder_cpr
         self.belt_pitch_m = belt_pitch_m
@@ -121,6 +118,14 @@ class FFBSlider(InteractionSlider):
 
         self.state = self.SLIDER_STATE_UNCALIBRATED
         self.calibration_step = None
+
+        super(FFBSlider, self).__init__(
+            slider_joint_name,
+            slider_joint_frame_id,
+            player1_force_topic,
+            player2_force_topic,
+            node_name = node_name,
+            update_frequency_Hz = update_frequency_Hz)
 
     @property
     def position_m(self):
@@ -140,7 +145,7 @@ class FFBSlider(InteractionSlider):
 
     @property
     def center_position_counts(self):
-        return ((self.forward_limit - self.reverse_limit)/2)+self.reverse_limit
+        return ((self.forward_limit_counts - self.reverse_limit_counts)/2)+self.reverse_limit_counts
 
 
     def calibrate_motor(self):
@@ -162,17 +167,18 @@ class FFBSlider(InteractionSlider):
     
     def shutdown(self):
         self.state = self.SLIDER_STATE_SHUTDOWN
+        self.stop()
 
     def update(self, dt_s):
     
         print('{:06.5f}'.format(dt_s), self.statestr(), self.calibstr(), self.odaxis.current_state,
-            '{:06.2f}'.format(self.forward_limit), 
-            '{:06.2f}'.format(self.reverse_limit),
-            '{:06.2f}'.format(self.center_position), 
+            '{:06.2f}'.format(self.forward_limit_counts), 
+            '{:06.2f}'.format(self.reverse_limit_counts),
+            '{:06.2f}'.format(self.center_position_counts), 
             '{:06.2f}'.format(self.odaxis.encoder.pos_estimate),
             '{:06.2f}'.format(self.odaxis.encoder.vel_estimate))
 
-        if self.state  == self.SLIDER_STATE_ERROR:
+        if self.state  == self.SLIDER_STATE_ERROR: 
             print("ERROR")
 
         elif self.state == self.SLIDER_STATE_UNCALIBRATED:
@@ -185,7 +191,6 @@ class FFBSlider(InteractionSlider):
 
             elif self.calibration_step == self.CALIBRATION_STEP_ODRIVE_ENCODER_OFFSET:
                 if self.odaxis.current_state == odrive.enums.AXIS_STATE_IDLE: #wait for odrive to finish
-            
                     if not self.odaxis.error:
                         self.odaxis.controller.config.control_mode = odrive.enums.CTRL_MODE_VELOCITY_CONTROL
                         self.odaxis.requested_state = odrive.enums.AXIS_STATE_CLOSED_LOOP_CONTROL
@@ -197,7 +202,9 @@ class FFBSlider(InteractionSlider):
                         self.state = self.SLIDER_STATE_ERROR
             
             elif self.calibration_step == self.CALIBRATION_STEP_CENTER_POSITION:
-                if abs(self.odaxis.encoder.vel_estimate) < 50 and abs(self.odaxis.encoder.shadow_count - self.center_position) < 120:
+                if (abs(self.odaxis.encoder.vel_estimate) < 50 and
+                    abs(self.odaxis.encoder.shadow_count - self.center_position_counts) < 120):
+
                     self.odaxis.requested_state = odrive.enums.AXIS_STATE_IDLE
 
                     self.calibration_step = self.CALIBRATION_STEP_DONE
@@ -207,14 +214,14 @@ class FFBSlider(InteractionSlider):
             pass
         elif self.state == self.SLIDER_STATE_RUNNING:
           pass 
-
+ 
         elif self.state == self.SLIDER_STATE_STOPPING:
             pass
 
     def motor_limit_timeout(self):
 
         if self.calibration_step == self.CALIBRATION_STEP_FORWARD_LIMIT:
-            self.forward_limit = self.odaxis.encoder.pos_estimate
+            self.forward_limit_counts = self.odaxis.encoder.pos_estimate
 
             self.odaxis.controller.vel_setpoint = -2400 #counts/s
 
@@ -224,10 +231,10 @@ class FFBSlider(InteractionSlider):
             self.calibration_step = self.CALIBRATION_STEP_REVERSE_LIMIT
 
         elif self.calibration_step == self.CALIBRATION_STEP_REVERSE_LIMIT:
-            self.reverse_limit = self.odaxis.encoder.pos_estimate
+            self.reverse_limit_counts = self.odaxis.encoder.pos_estimate
             
             self.odaxis.controller.config.control_mode = odrive.enums.CTRL_MODE_POSITION_CONTROL
-            self.odaxis.controller.pos_setpoint = self.center_position
+            self.odaxis.controller.pos_setpoint = self.center_position_counts
 
             self.odaxis.requested_state = odrive.enums.AXIS_STATE_CLOSED_LOOP_CONTROL
 
@@ -239,11 +246,13 @@ if __name__ == "__main__":
     print("finding an odrive...")
     odrv0 = odrive.find_any()
     
-    ffbslider = FFBSlider(    time.sleep(2)
+    ffbslider = FFBSlider(
+        "baseboard_to_slider",
+        "slider",
+        "load_cell_1",
+        "load_cell_2",
+        odrv0.axis1)
     ffbslider.calibrate_motor()
 
-
-    while(not rospy.is_shutdown()):
-        time.sleep(.1)
-    ffbslider.shutdown()
-    
+    rospy.on_shutdown(ffbslider.shutdown)
+    #rospy.on_shutdown(odrv0.reboot)
