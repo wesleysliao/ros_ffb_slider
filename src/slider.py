@@ -24,8 +24,8 @@ class InteractionSlider(object):
         self._velocity_mps = 0.0
         self._effort_N = 0.0
         
-        self.player1_force_N = None
-        self.player2_force_N = None
+        self.player1_force_N = 0.0
+        self.player2_force_N = 0.0
 
         self.slider_joint_name = slider_joint_name
         self.slider_joint_frame_id = slider_joint_frame_id 
@@ -100,34 +100,3 @@ class InteractionSlider(object):
 
     def update(self, dt_s):
         pass
-
-class SpringSimSlider(InteractionSlider):
-    
-    def __init__(self,
-        slider_joint_name,
-        slider_joint_frame_id,
-        player1_force_topic,
-        player2_force_topic,
-        spring_constant_Npm = 1,
-        node_name = "SpringSimSlider",
-        update_frequency_Hz = 10):
-        
-        self.k_Npm = spring_constant_Npm
-
-        super(SpringSimSlider, self).__init__(
-            slider_joint_name,
-            slider_joint_frame_id,
-            player1_force_topic,
-            player2_force_topic,
-            node_name = node_name,
-            update_frequency_Hz = update_frequency)
-
-    def update(self, dt_s):
-        
-        applied_force_N = self.player1_force_N + self.player2_force_N
-        
-        pos = applied_force_N/self.k_Npm
-        
-        self.effort_N = -applied_force_N
-        self.velocity_mps = (pos - self.position_m)/dt_s
-        self.position_m = pos
