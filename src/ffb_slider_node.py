@@ -25,8 +25,8 @@ from sensor_msgs.msg import JointState
 import threading
 import time
 
-class PIDController:
-    
+class PIDController(object):
+
     def __init__(self, kp, ki, kd):
         self.kp = kp
         self.ki = ki
@@ -41,9 +41,12 @@ class PIDController:
 	pos_error = desired_pos - pos
 	vel_error = desired_vel - vel
 
-        self.error_sum += pos_error*dt
+        self.error_sum += (pos_error*dt) + (0.5*vel_error*dt)
 
         return (self.kp*pos_error) + (self.ki*self.error_sum) + (self.kd*vel_error)
+
+class FFWController(object):
+    pass
 
 class FFBSlider(InteractionSlider):
 
@@ -77,7 +80,6 @@ class FFBSlider(InteractionSlider):
             return "SLIDER_STATE_STOPPING    "
         elif self.state == self.SLIDER_STATE_SHUTDOWN:
             return "SLIDER_STATE_SHUTDOWN    "
-
 
     def calibstr(self):
         if self.calibration_step == self.CALIBRATION_STEP_NOT_STARTED:
@@ -122,7 +124,7 @@ class FFBSlider(InteractionSlider):
         self.state = self.SLIDER_STATE_UNCALIBRATED
         self.calibration_step = None
 
-	self.pid = PIDController(400.0, 0.0005, 0.004)
+	self.pid = PIDController(480.0, 2400.0, 75.0)
 
         super(FFBSlider, self).__init__(
             slider_joint_name,
@@ -140,10 +142,11 @@ class FFBSlider(InteractionSlider):
 
     @property
     def velocity_mps(self):
-        return self.odaxis.encoder.vel_estimate
+        return self.odaxis.encoder.vel_estimate*self.travel_per_count_m
 
     @property
     def effort_N(self):
+	return self.pid.error_sum*self.pid.ki
 	return self.odaxis.controller.current_setpoint
 
     @property
@@ -280,11 +283,12 @@ if __name__ == "__main__":
         "load_cell_2",
         odrv0.axis1,
 	"baseboard_to_simslider")
+    rospy.on_shutdown(ffbslider.shutdown)
+    
     ffbslider.calibrate_motor()
 
     while(ffbslider.state != ffbslider.SLIDER_STATE_READY):
 	time.sleep(0.1)
 
-    #ffbslider.start()
+    ffbslider.start()
 
-    rospy.on_shutdown(ffbslider.shutdown)

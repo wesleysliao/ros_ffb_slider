@@ -35,8 +35,8 @@ class MassSpringDamperSimSlider(InteractionSlider):
         update_frequency_Hz = 60):
         
         self.k_Npm = spring_constant_Npm
-	self.b_Nspm = damping_constant_Nspm
-	self.m_kg = mass_kg
+        self.b_Nspm = damping_constant_Nspm
+        self.m_kg = mass_kg
 
         super(MassSpringDamperSimSlider, self).__init__(
             slider_joint_name,
@@ -78,5 +78,5 @@ if __name__ == "__main__":
 	mass_kg = 50,
 	damping_constant_Nspm = -60)
 
-    rospy.on_shutdown(msdsimslider.stop)
+    rospy.on_shutdown(msdsimslider.quit)
 
