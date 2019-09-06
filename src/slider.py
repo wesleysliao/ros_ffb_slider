@@ -75,7 +75,7 @@ class InteractionSlider(object):
     def p2_force_sub_cb(self, msg):
         self.player2_force_N = msg.wrench.force.x
 
-    def stop(self):
+    def quit(self):
         self._stop_flag = True
 
     def publish_loop(self):

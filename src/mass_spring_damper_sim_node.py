@@ -21,7 +21,7 @@ import time
 import rospy
 
 
-class SpringSimSlider(InteractionSlider):
+class MassSpringDamperSimSlider(InteractionSlider):
     
     def __init__(self,
         slider_joint_name,
@@ -29,12 +29,16 @@ class SpringSimSlider(InteractionSlider):
         player1_force_topic,
         player2_force_topic,
         spring_constant_Npm = 1,
+        mass_kg = 1,
+        damping_constant_Nspm = 1,
         node_name = "SpringSimSlider",
         update_frequency_Hz = 60):
         
         self.k_Npm = spring_constant_Npm
+	self.b_Nspm = damping_constant_Nspm
+	self.m_kg = mass_kg
 
-        super(SpringSimSlider, self).__init__(
+        super(MassSpringDamperSimSlider, self).__init__(
             slider_joint_name,
             slider_joint_frame_id,
             player1_force_topic,
@@ -44,7 +48,7 @@ class SpringSimSlider(InteractionSlider):
         
     @property
     def effort_N(self):
-        return -(-self.player2_force_N)
+        return -(self.player2_force_N)
         #return -(self.player1_force_N - self.player2_force_N)
 
     @InteractionSlider.position_m.setter
@@ -56,17 +60,23 @@ class SpringSimSlider(InteractionSlider):
         self._velocity_mps = vel_value
 
     def update(self, dt_s):
-        pos = -self.effort_N/self.k_Npm
-        self.velocity_mps = (pos - self.position_m)/dt_s
-        self.position_m = pos
+        self.accel_mpss = (
+	    (self.effort_N)
+	    - (self.position_m*self.k_Npm)
+	    + (self.velocity_mps*self.b_Nspm))/self.m_kg
+	
+	self.velocity_mps += (self.accel_mpss*dt_s) 
+        self.position_m += (self.velocity_mps*dt_s)
 
 if __name__ == "__main__":
-    springsimslider = SpringSimSlider(
+    msdsimslider = MassSpringDamperSimSlider(
         "baseboard_to_simslider",
         "simslider",
         "load_cell_1",
         "load_cell_2",
-        spring_constant_Npm = 1000)
+        spring_constant_Npm = 1200,
+	mass_kg = 50,
+	damping_constant_Nspm = -60)
 
-    rospy.on_shutdown(springsimslider.quit)
+    rospy.on_shutdown(msdsimslider.stop)
 
